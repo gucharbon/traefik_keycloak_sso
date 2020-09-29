@@ -1,0 +1,3 @@
+---
+postgres_image: postgres:12
+postgres_volume: keycloak_postgres_data

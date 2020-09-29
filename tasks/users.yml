@@ -1,0 +1,43 @@
+---
+- name: Create realm test user
+  uri:
+    url: "{{ keycloak_base_url }}/auth/admin/realms/{{ oidc_realm }}/users"
+    method: POST
+    status_code:
+      - 201
+      # 409 means user already exists
+      - 409
+    headers: &keycloak-headers
+      Accept: "application/json"
+      Authorization: "{{ keycloak_access_header }}"
+      Content-type: "application/json"
+    body:
+      firstName: Test
+      lastName: Account
+      email: "{{ keycloak_test_user_email }}"
+      enabled: true
+      username: "{{ keycloak_test_user }}"
+    body_format: json
+    validate_certs: "{{ uri_validate_cert }}"
+  register: realm_user
+  tags:
+    - keycloak_realm
+
+- name: Set credentials for realm test user
+  uri:
+    url: "{{ realm_user.location }}/reset-password"
+    status_code:
+      - 204
+    method: PUT
+    headers:
+      <<: *keycloak-headers
+    body:
+      value: "{{ keycloak_test_user_password }}"
+      type: password
+    body_format: json
+    validate_certs: "{{ uri_validate_cert }}"
+  register: reset_password
+  when: "realm_user.status == 201"
+  retries: 3
+  delay: 5
+  until: "reset_password.status == 204"

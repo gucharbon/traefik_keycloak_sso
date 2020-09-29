@@ -1,0 +1,15 @@
+---
+services: []
+
+admin_sso_redirect_domains:
+  - traefik
+  - admin-sso
+  - prom
+  - viz
+  - loki
+  - cadvisor
+  - node-exporter
+  - portainer
+
+sso_redirect_domains:
+  - api

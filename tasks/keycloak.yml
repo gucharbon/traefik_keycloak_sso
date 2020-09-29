@@ -1,0 +1,414 @@
+---
+# Create config and secret names for keycloak service
+- name: Initialize keycloak configurations and secrets names
+  set_fact:
+    keycloak_service_name: "keycloak-{{ profile }}"
+    postgres_service_name: "keycloak-postgres-{{ profile }}"
+    keycloak_user_config_name: "keycloak_user_{{ profile }}_{{ ansible_date_time.epoch }}"
+    keycloak_krb5_config_name: "keycloak_krb5_{{ profile }}_{{ ansible_date_time.epoch }}"
+    keycloak_password_secret_name: "keycloak_password_{{ profile }}_{{ ansible_date_time.epoch }}"
+    keycloak_keytab_secret_name: "keycloak_keytab_{{ profile }}_{{ ansible_date_time.epoch }}"
+
+# Retrieve info about running keycloak service
+- name: Retrieve info from running keycloak service
+  docker_swarm_service_info:
+    name: "{{ keycloak_service_name }}"
+  register: keycloak_infos
+
+# Update config and secret if exiting one are being used
+- name: Update keycloak configuration and secret names if existing ones are being used
+  set_fact:
+    keycloak_user_config_name: "{{ keycloak_infos.service.Spec.Labels.get('docker.configs.user.name', keycloak_user_config_name) }}"
+    keycloak_krb5_config_name: "{{ keycloak_infos.service.Spec.Labels.get('docker.configs.krb5.name', keycloak_krb5_config_name) }}"
+    keycloak_password_secret_name: "{{ keycloak_infos.service.Spec.Labels.get('docker.secrets.password.name', keycloak_password_secret_name) }}"
+    keycloak_keytab_secret_name: "{{ keycloak_infos.service.Spec.Labels.get('docker.secrets.keytab.name', keycloak_keytab_secret_name) }}"
+  when: keycloak_infos.service is not none
+
+# Create a fact rotated secret
+- name: Set facts before secret definition
+  set_fact:
+    keycloak_keytab_secret_rotated: false
+    keycloak_keytab_secret_rotated_name: ""
+    keycloak_password_secret_rotated: false
+    keycloak_password_secret_rotated_name: ""
+
+# Keytab secret should only be created when a keytab is provided.
+- name: Create kerberos keytab secret
+  block:
+    # Try to create keytab secret. This will fail if the secret is already bein used and content has been updated.
+    - name: Create keycloak keytab docker secret
+      docker_secret:
+        name: "{{ keycloak_keytab_secret_name }}"
+        data: "{{ lookup('file', keycloak_kerberos_keytab) | b64encode }}"
+        data_is_b64: true
+        labels:
+          provider: ansible
+          service: keycloak
+          kind: spn-keytab
+          format: keytab
+        state: present
+      # The variable 'keycloak_keytab_generation' allow us to know why secret generation failed in case of failure.
+      register: keycloak_keytab_generation
+      # We ignore here but can raise an error manually in the next task
+      ignore_errors: true
+
+    # End the deployment if the secret cannot be created and the error is not due to secret already being used.
+    - name: Handle keycloak keytab secret generation failure
+      fail:
+        msg: "Fatal: to create docker secret: {{ keycloak_keytab_generation.msg }}"
+      when: >
+        keycloak_keytab_generation.failed|bool
+        and
+        'is in use by the following service' not in keycloak_keytab_generation.msg
+
+    # Handle the case when secret is already in use
+    - name: Perform rotation for keytab secret
+      block:
+        - name: Generating new name for keycloak keytab rotated secret
+          set_fact:
+            keycloak_keytab_secret_rotated: true
+            keycloak_keytab_secret_rotated_name: "keycloak_keytab_{{ profile }}_{{ ansible_date_time.epoch }}"
+
+        # Create new keytab secret.
+        - name: Create keycloak keytab rotated secret
+          docker_secret:
+            name: "{{ keycloak_keytab_secret_rotated_name }}"
+            data: "{{ lookup('file', keycloak_kerberos_keytab) | b64encode }}"
+            data_is_b64: true
+            labels:
+              provider: ansible
+              service: keycloak
+              kind: spn-keytab
+              format: keytab
+            state: present
+      # Condition for the rotation block
+      when: >
+        keycloak_keytab_generation.failed|bool
+        and
+        'is in use by the following service' in keycloak_keytab_generation.msg
+  # Condition for the keytab block
+  when: keycloak_kerberos_keytab is not none
+
+# Password secret should always be created
+- name: Create keycloak password docker secret
+  docker_secret:
+    name: "{{ keycloak_password_secret_name }}"
+    data: "{{ keycloak_password | b64encode }}"
+    data_is_b64: true
+    labels:
+      provider: ansible
+      service: keycloak
+      kind: password
+      format: text
+    state: present
+  # The variable 'keycloak_password_generation' allow us to know why secret generation failed in case of failure.
+  register: keycloak_password_generation
+  # We ignore here but can raise an error manually in the next task
+  ignore_errors: true
+
+# End the deployment if the secret cannot be created and the error is not due to secret already being used.
+- name: Handle keycloak password secret generation failure
+  fail:
+    msg: "Fatal: to create docker secret: {{ keycloak_password_generation.msg }}"
+  when: >
+    keycloak_password_generation.failed|bool
+    and
+    'is in use by the following service' not in keycloak_password_generation.msg
+
+- name: Perform rotation for password secret
+  block:
+    - name: Generating new name for keycloak rotated secret
+      set_fact:
+        keycloak_password_secret_rotated: true
+        keycloak_password_secret_rotated_name: "keycloak_password_{{ profile }}_{{ ansible_date_time.epoch }}"
+
+    - name: Create keycloak password rotated secret
+      docker_secret:
+        name: "{{ keycloak_password_secret_rotated_name }}"
+        data: "{{ keycloak_password | b64encode }}"
+        data_is_b64: true
+        labels:
+          provider: ansible
+          service: keycloak
+          kind: password
+          format: text
+        state: present
+  # Condition for the rotation block
+  when: >
+    keycloak_password_generation.failed|bool
+    and
+    'is in use by the following service' in keycloak_password_generation.msg
+
+# Create a fact rotated secret
+- name: Set facts before keycloak user config definition
+  set_fact:
+    keycloak_user_config_rotated: false
+    keycloak_krb5_config_rotated: false
+    keycloak_user_config_rotated_name: ""
+    keycloak_krb5_config_rotated_name: ""
+
+- name: Create keycloak user docker config
+  docker_config:
+    name: "{{ keycloak_user_config_name }}"
+    data: "{{ keycloak_user | b64encode }}"
+    data_is_b64: true
+    labels:
+      provider: ansible
+      service: keycloak
+      kind: username
+      format: text
+    state: present
+  register: keycloak_user_generation
+  ignore_errors: true
+
+# End the deployment if the config cannot be created
+# and the error is not due to config already being used.
+- name: Handle keycloak user config generation failure
+  fail:
+    msg: "Fatal: to create docker config: {{ keycloak_user_generation.msg }}"
+  when: >
+    keycloak_user_generation.failed|bool
+    and
+    'is in use by the following service' not in keycloak_user_generation.msg
+
+# Handle case when config is already in use
+- name: Perform keycloak user config rotation
+  block:
+    - name: Generate new name for keycloak user rotated config
+      set_fact:
+        keycloak_user_config_rotated: true
+        keycloak_user_config_rotated_name: "keycloak_user_{{ profile }}_{{ ansible_date_time.epoch }}"
+
+    - name: Create keycloak user rotated docker config
+      docker_config:
+        name: "{{ keycloak_user_config_rotated_name }}"
+        data: "{{ keycloak_user | b64encode }}"
+        data_is_b64: true
+        labels:
+          provider: ansible
+          service: keycloak
+          kind: username
+          format: text
+        state: present
+  when: >
+    keycloak_user_generation.failed|bool
+    and
+    'is in use by the following service' in keycloak_user_generation.msg
+
+- name: Create kerberos krb5 configuration
+  block:
+    - name: Create keycloak krb5 docker config
+      docker_config:
+        name: "{{ keycloak_krb5_config_name }}"
+        data: "{{ lookup('file', keycloak_kerberos_config) | b64encode }}"
+        data_is_b64: true
+        labels:
+          provider: ansible
+          service: keycloak
+          kind: username
+          format: text
+        state: present
+      register: keycloak_krb5_generation
+      ignore_errors: true
+
+    - name: Handle keycloak krb5 config generation failure
+      fail:
+        msg: "Fatal: to create docker secret: {{ keycloak_krb5_generation.msg }}"
+      when: >
+        keycloak_krb5_generation.failed|bool
+        and
+        'is in use by the following service' not in keycloak_krb5_generation.msg
+
+    - name: Perform rotation for krb5 config
+      block:
+        - name: Generating new name for keycloak krb5 rotated config
+          set_fact:
+            keycloak_krb5_config_rotated: true
+            keycloak_krb5_config_rotated_name: "keycloak_krb5_{{ profile }}_{{ ansible_date_time.epoch }}"
+
+        - name: Create keycloak krb5 rotated config
+          docker_config:
+            name: "{{ keycloak_krb5_config_rotated_name }}"
+            data: "{{ lookup('file', keycloak_kerberos_config) | b64encode }}"
+            data_is_b64: true
+            labels:
+              provider: ansible
+              service: keycloak
+              kind: username
+              format: text
+            state: present
+      # Condition for the rotation block
+      when: >
+        keycloak_krb5_generation.failed|bool
+        and
+        'is in use by the following service' in keycloak_krb5_generation.msg
+  # Condition for the krb5 block
+  when: keycloak_kerberos_config is not none
+
+# Create the network that will be used by postgres and keycloak
+- name: Create keycloak database network
+  docker_network:
+    name: "{{ keycloak_database_network }}"
+    driver: overlay
+    attachable: true
+
+# Deploy the postgres service
+- name: Deploy postgres service
+  # Use docker_swarm_service module
+  docker_swarm_service:
+    # Service name
+    name: "{{ postgres_service_name }}"
+    # Service images
+    image: "{{ postgres_image }}"
+    mode: replicated
+    replicas: 1
+    env:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: password
+    mounts:
+      - source: "{{ postgres_volume }}"
+        target: /var/lib/postgresql/data
+        type: volume
+    # Configure networks to attach service to
+    networks:
+      - name: "{{ keycloak_database_network }}"
+        options:
+          external: true
+    labels:
+      traefik.enable: "false"
+
+- name: Set host for keycloak
+  set_fact:
+    keycloak_host: "{{ keycloak_subdomain }}.{{ profile + '.' if 'prod' not in profile|lower else '' }}{{ domain }}"
+
+- name: Generate keycloak service labels, configs and secrets
+  set_fact:
+    keycloak_labels: |
+      {
+        "traefik.enable": "true",
+        "traefik.http.routers.{{ keycloak_service_name }}.rule": "Host(`{{ keycloak_host }}`)",
+        "traefik.http.routers.{{ keycloak_service_name }}.entrypoints": "http,https",
+        "traefik.http.routers.{{ keycloak_service_name }}.service": "{{ keycloak_service_name }}-service",
+        "traefik.http.services.{{ keycloak_service_name }}-service.loadbalancer.server.port": "8080",
+        "traefik.http.routers.{{ keycloak_service_name }}.tls": "{{ 'true' if traefik_enable_https else 'false' }}",
+        "traefik.http.routers.{{ keycloak_service_name }}.tls.certresolver": "{{ 'letsencrypt' if traefik_enable_letsencrypt else omit }}",
+        "docker.configs.user.name": "{{ keycloak_user_config_rotated_name or keycloak_user_config_name }}",
+        "docker.secrets.password.name": "{{ keycloak_password_secret_rotated_name or keycloak_password_secret_name }}"
+      }
+    keycloak_configs:
+      - config_name: "{{ keycloak_user_config_rotated_name or keycloak_user_config_name }}"
+        filename: /keycloak_user
+    keycloak_secrets:
+      - secret_name: "{{ keycloak_password_secret_rotated_name or keycloak_password_secret_name }}"
+        filename: /keycloak_password
+
+- name: Update keycloak service configs, secrets and labels to enable kerberos integration
+  block:
+    - name: Create new configs, secrets and labels
+      set_fact:
+        keycloak_kerberos_labels: |
+          {
+            "docker.configs.krb5.name": "{{ keycloak_krb5_config_rotated_name or keycloak_krb5_config_name }}",
+            "docker.secrets.keytab.name": "{{ keycloak_keytab_secret_rotated_name or keycloak_keytab_secret_name }}"
+          }
+        keycloak_kerberos_configs:
+          - config_name: "{{ keycloak_krb5_config_rotated_name or keycloak_krb5_config_name }}"
+            filename: /etc/krb5.conf
+        keycloak_kerberos_secrets:
+          - secret_name: "{{ keycloak_keytab_secret_rotated_name or keycloak_keytab_secret_name }}"
+            filename: /http.keytab
+
+    - name: Update existing configs, secrets and labels
+      set_fact:
+        keycloak_labels: "{{ keycloak_labels.update(keycloak_kerberos_labels) }}"
+        keycloak_configs: "{{ keycloak_configs + keycloak_kerberos_configs }}"
+        keycloak_secrets: "{{ keycloak_secrets + keycloak_kerberos_secrets }}"
+  when: >
+    keycloak_kerberos_keytab is not none
+    or
+    keycloak_kerberos_config is not none
+
+# Deploy keycloak service
+- name: Deploy keycloak service
+  docker_swarm_service:
+    name: "{{ keycloak_service_name }}"
+    image: "{{ keycloak_image }}"
+    # Add constraint on service deployment
+    mode: replicated
+    replicas: "{{ keycloak_replicas }}"
+    env:
+      KEYCLOAK_USER_FILE: /keycloak_user
+      KEYCLOAK_PASSWORD_FILE: /keycloak_password
+      PROXY_ADDRESS_FORWARDING: "true"
+      DB_VENDOR: POSTGRES
+      DB_ADDR: "{{ postgres_service_name }}"
+      DB_DATABASE: keycloak
+      DB_USER: keycloak
+      DB_SCHEMA: public
+      DB_PASSWORD: password
+    # Configure configs
+    configs: "{{ keycloak_configs }}"
+    # Configure secrets
+    secrets: "{{ keycloak_secrets }}"
+    # Configure logging
+    logging:
+      driver: "{{ keycloak_logging_driver }}"
+      options: "{{ keycloak_logging_options }}"
+    # Configure resource reservations
+    reservations:
+      cpus: "{{ keycloak_min_cpus }}"
+      memory: "{{ keycloak_min_memory }}"
+    # Configure resource limits
+    limits:
+      cpus: "{{ keycloak_max_cpus }}"
+      memory: "{{ keycloak_max_memory }}"
+    # Configure restart policy
+    restart_config:
+      condition: on-failure
+      delay: 10s
+      max_attempts: 3
+      window: 120s
+    # Configure networks to attach service to
+    networks:
+      - name: "{{ traefik_network }}"
+        options:
+          external: true
+      - name: "{{ keycloak_database_network }}"
+        options:
+          external: true
+    # Keycloak labels
+    labels: "{{ keycloak_labels }}"
+  tags:
+    - keycloak
+
+# Remove old configs and secrets  when needed
+- name: Remove old keycloak user config
+  docker_config:
+    name: "{{ keycloak_user_config_name }}"
+    state: absent
+  when: keycloak_user_config_rotated|bool
+
+- name: Remove old keycloak kerberos config
+  docker_config:
+    name: "{{ keycloak_krb5_config_name }}"
+    state: absent
+  when: >
+    keycloak_krb5_config_rotated is defined
+    and
+    keycloak_krb5_config_rotated|bool
+
+- name: Remove old keycloak password secret
+  docker_secret:
+    name: "{{ keycloak_password_secret_name }}"
+    state: absent
+  when: keycloak_password_secret_rotated|bool
+
+- name: Remove old keycloak keytab secret
+  docker_secret:
+    name: "{{ keycloak_keytab_secret_name }}"
+    state: absent
+  when: >
+    keycloak_keytab_secret_rotated is defined
+    and
+    keycloak_keytab_secret_rotated|bool

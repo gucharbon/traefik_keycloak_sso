@@ -1,0 +1,28 @@
+---
+keycloak_image: gcharbon/keycloak:latest
+keycloak_subdomain: keycloak
+
+keycloak_replicas: 1
+
+keycloak_database_network: keycloak-database-network
+
+keycloak_user: admin
+keycloak_password: keycloak admin password
+
+keycloak_test_user: test
+keycloak_test_user_password: test user password
+keycloak_test_user_email: "{{ keycloak_test_user }}@{{ domain }}"
+
+keycloak_kerberos_keytab: null
+keycloak_kerberos_config: null
+
+keycloak_logging_driver: json-file
+keycloak_logging_options:
+  max-size: 500k
+  max-file: "10"
+
+keycloak_min_cpus: 0.25
+keycloak_max_cpus: 1
+
+keycloak_min_memory: 256M
+keycloak_max_memory: 1G

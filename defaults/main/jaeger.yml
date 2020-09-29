@@ -1,0 +1,7 @@
+---
+traefik_enable_jaeger_tracing: true
+
+traefik_jaeger_sampling_server_url: http://jaeger:5778/sampling
+traefik_jaeger_tracing_agent_address: jaeger:6831
+traefik_jaeger_trace_context_name: traefik-trace-id
+traefik_jaeger_collector_endpoint: http://jaeger:14268/api/traces?format=jaeger.thrift

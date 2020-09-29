@@ -1,0 +1,49 @@
+---
+- name: Set redirect URIS fact for admin sso client
+  set_fact:
+    admin_sso_redirect_uris: "{{ admin_sso_redirect_uris|default([]) + [scheme + '://' + item + '.' + domain + '/*'] }}"
+  loop: "{{ admin_sso_redirect_domains }}"
+
+- name: Create or update keycloak admin sso client
+  keycloak_client:
+    auth_client_id: admin-cli
+    auth_keycloak_url: "{{ keycloak_base_url }}/auth"
+    auth_realm: "master"
+    auth_username: "{{ keycloak_user }}"
+    auth_password: "{{ keycloak_password }}"
+    realm: "{{ oidc_realm }}"
+    client_id: "{{ oidc_admin_client_id }}"
+    protocol: openid-connect
+    public_client: false
+    standard_flow_enabled: true
+    service_accounts_enabled: true
+    authorization_services_enabled: true
+    redirect_uris: "{{ admin_sso_redirect_uris }}"
+    validate_certs: "{{ uri_validate_cert }}"
+    state: present
+  delegate_to: localhost
+  # Client ID can be accessed using "{{ admin_client.end_state.id }}
+  register: admin_client
+  tags:
+    - keycloak_clients
+
+- name: Get admin sso client secret from API
+  uri:
+    url: "{{ keycloak_base_url }}/auth/admin/realms/{{ oidc_realm }}/clients/{{ admin_client.end_state.id }}/client-secret"
+    method: GET
+    status_code:
+      - 200
+    headers:
+      Accept: "application/json"
+      Authorization: "{{ keycloak_access_header }}"
+    validate_certs: "{{ uri_validate_cert }}"
+  delegate_to: localhost
+  register: keycloak_admin_client_secret
+  tags:
+    - keycloak_clients
+
+- name: Set admin sso client secret as fact
+  set_fact:
+    admin_oidc_client_secret: "{{ keycloak_admin_client_secret.json.value }}"
+  tags:
+    - keycloak_clients

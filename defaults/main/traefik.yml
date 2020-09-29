@@ -1,0 +1,55 @@
+---
+# TODO: Add SNI rules for TCP  (require TLS enabled)
+
+traefik_image: traefik:v2.2
+
+traefik_subdomain: traefik
+
+traefik_network: "traefik-network-{{ profile }}"
+
+traefik_http_port: 80
+traefik_https_port: 443
+
+traefik_entrypoints: {}
+
+traefik_enable_https: true
+traefik_enable_https_redirect: true
+traefik_enable_letsencrypt: true
+
+letsencrypt_email: gu.charbon@gmail.com
+letsencrypt_directory: /letsencrypt/
+letsencrypt_ca_server: https://acme-staging-v02.api.letsencrypt.org/directory
+
+traefik_log_level: DEBUG
+traefik_log_format: CLF
+traefik_access_log_format: CLF
+
+traefik_enable_api_insecure: false
+traefik_enable_api_dashboard: true
+traefik_enable_api_debug: true
+
+traefik_enable_prometheus_metrics: true
+traefik_prometheus_metrics_address: :9000
+
+traefik_enable_datadog_metrics: false
+traefik_datadog_metrics_agent_address: "datadog-agent:8125"
+traefik_datadog_metrics_push_interval: 10s
+
+traefik_enable_datadog_tracing: false
+traefik_datadog_tracing_agent_address: "datadog-agent:8126"
+
+traefik_logging_driver: json-file
+traefik_logging_options:
+  max-size: 500k
+  max-file: "10"
+
+traefik_replicas: 1
+
+traefik_min_cpus: 0.1
+traefik_max_cpus: 1
+
+traefik_min_memory: 64M
+traefik_max_memory: 512M
+
+traefik_default_tls_cert: ""
+traefik_default_tls_key: ""

@@ -1,0 +1,17 @@
+---
+sso_subdomain: sso
+admin_sso_subdomain: admin-sso
+
+oidc_realm: demo
+oidc_client_id: sso
+oidc_admin_client_id: admin-sso
+
+traefik_forward_auth_image: thomseddon/traefik-forward-auth:2
+
+traefik_forward_auth_log_level: DEBUG
+
+traefik_forward_auth_secret: some random password
+
+traefik_forward_auth_forward_headers: X-Forwarded-For, X-Forward-User, X-Forwarded-Proto, X-Real-IP
+
+traefik_forward_enable_insecure_cookies: "true"

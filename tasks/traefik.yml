@@ -1,0 +1,244 @@
+---
+# Create config and secret names for traefik service
+- name: Create traefik configurations and secrets names
+  set_fact:
+    traefik_service_name: "{{ 'traefik-' + profile }}"
+    traefik_config_name: "traefik_config_{{ profile }}_{{ ansible_date_time.epoch }}"
+    traefik_do_token_name: "do_token_{{ profile }}_{{ ansible_date_time.epoch }}"
+
+# Retrieve info about running traefik service
+- name: Retrieve info from running traefik service
+  docker_swarm_service_info:
+    name: "{{ traefik_service_name }}"
+  register: traefik_infos
+
+# Update config and secret if exiting one are being used
+- name: Update traefik configuration and secret names if existing ones are being used
+  set_fact:
+    traefik_do_token_name: "{{ traefik_infos.service.Spec.Labels.get('docker.secrets.do_token.name', traefik_do_token_name) }}"
+    traefik_config_name: "{{ traefik_infos.service.Spec.Labels.get('docker.configs.traefik_config.name', traefik_config_name) }}"
+  when: traefik_infos.service is not none
+
+# Create a fact rotated secret
+- name: Set facts before secret definition
+  set_fact:
+    traefik_do_token_rotated: false
+    traefik_do_token_rotated_name: ""
+
+# Try to create docker secret
+- name: Create do token docker secret
+  docker_secret:
+    name: "{{ traefik_do_token_name }}"
+    data: "{{ do_auth_token | b64encode }}"
+    data_is_b64: true
+    labels:
+      provider: ansible
+      service: traefik
+      kind: token
+      format: text
+    state: present
+  register: do_token_generation
+  ignore_errors: true
+
+# End the deployment if the secret cannot be created
+# and the error is not due to secret already being used.
+- name: Handle do token secret generation failure
+  fail:
+    msg: "Fatal: to create docker secret: {{ do_token_generation.msg }}"
+  when: >
+    do_token_generation.failed|bool
+    and
+    'is in use by the following service' not in do_token_generation.msg
+
+# Handle the case when secret is already in use
+- block:
+    # Generate a new name to create a temporary secret.
+    - name: Generating new name for do token rotated secret
+      set_fact:
+        traefik_do_token_rotated: true
+        traefik_do_token_rotated_name: "do_token_{{ profile }}_{{ ansible_date_time.epoch }}"
+
+    # Create temporary docker secret.
+    - name: Create do token rotated docker secret
+      docker_secret:
+        name: "{{ traefik_do_token_rotated_name }}"
+        data: "{{ do_auth_token | b64encode }}"
+        data_is_b64: true
+        labels:
+          provider: ansible
+          service: traefik
+          kind: token
+          format: text
+        state: present
+  when: >
+    do_token_generation.failed|bool
+    and
+    'is in use by the following service' in do_token_generation.msg
+
+# Create a fact rotated secret
+- name: Set facts before config definition
+  set_fact:
+    traefik_config_rotated: false
+    traefik_config_rotated_name: ""
+
+# Create configuration
+- name: Create traefik docker config
+  docker_config:
+    name: "{{ traefik_config_name }}"
+    data: "{{ lookup('template', 'traefik.yml.j2') | b64encode }}"
+    data_is_b64: true
+    labels:
+      provider: ansible
+      service: traefik
+      kind: configuration
+      format: yaml
+    state: present
+  register: traefik_config_generation
+  ignore_errors: true
+
+# End the deployment if the config cannot be created
+# and the error is not due to config already being used.
+- name: Handle traefik config generation failure
+  fail:
+    msg: "Fatal: to create docker secret: {{ traefik_config_generation.msg }}"
+  when: >
+    traefik_config_generation.failed|bool
+    and
+    'is in use by the following service' not in traefik_config_generation.msg
+
+# Handle case when config is already in use
+- block:
+    # Generate a new name to create a temporary config.
+    - name: Generate new name for traefik rotated config
+      set_fact:
+        traefik_config_rotated: true
+        traefik_config_rotated_name: "traefik_config_{{ profile }}_{{ ansible_date_time.epoch }}"
+
+    # Create temporary docker config.
+    - name: Create traefik rotated docker config
+      docker_config:
+        name: "{{ traefik_config_rotated_name }}"
+        data: "{{ lookup('template', 'traefik.yml.j2') | b64encode }}"
+        data_is_b64: true
+        labels:
+          provider: ansible
+          service: traefik
+          kind: configuration
+          format: yaml
+        state: present
+  when: >
+    traefik_config_generation.failed|bool
+    and
+    'is in use by the following service' in traefik_config_generation.msg
+
+# Create the network that will be used by traefik
+- name: Create traefik public network
+  docker_network:
+    name: "{{ traefik_network }}"
+    driver: overlay
+    attachable: true
+  tags:
+    - traefik
+
+- name: Set host for traefik
+  set_fact:
+    traefik_host: "{{ traefik_subdomain }}.{{ profile + '.' if 'prod' not in profile|lower else '' }}{{ domain }}"
+
+- name: Generate traefik labels
+  set_fact:
+    traefik_labels: |
+      {
+        "traefik.enable": "true",
+        "traefik.http.routers.{{ traefik_service_name }}.rule": "Host(`{{ traefik_host }}`)",
+        "traefik.http.routers.{{ traefik_service_name }}.entrypoints": "http,https",
+        "traefik.http.routers.{{ traefik_service_name }}.service": "api@internal",
+        "traefik.http.services.{{ traefik_service_name }}-dummy.loadbalancer.server.port": "8080",
+        "traefik.http.routers.{{ traefik_service_name }}.tls": "{{ 'true' if traefik_enable_https else 'false' }}",
+        "traefik.http.routers.{{ traefik_service_name }}.tls.certresolver": "{{ 'letsencrypt' if traefik_enable_letsencrypt else omit }}",
+        "docker.configs.traefik_config.name": "{{ traefik_config_rotated_name or traefik_config_name }}",
+        "docker.secrets.do_token.name": "{{ traefik_do_token_rotated_name or traefik_do_token_name }}"
+      }
+
+# Deploy traefik to the swarm
+- name: Deploy traefik service
+  docker_swarm_service:
+    # Service name
+    name: "{{ traefik_service_name  }}"
+    # Service images
+    image: "{{ traefik_image }}"
+    # Add constraint on service deployment
+    mode: replicated
+    replicas: "{{ traefik_replicas }}"
+    placement:
+      constraints:
+        - node.role==manager
+    env:
+      DO_AUTH_TOKEN_FILE: "/run/secrets/do_token"
+    # Run command at startup
+    args:
+      - --configFile=/traefik.yml
+    # Configure configs
+    configs:
+      - config_name: "{{ traefik_config_rotated_name or traefik_config_name }}"
+        filename: /traefik.yml
+    # Configure secrets
+    secrets:
+      - secret_name: "{{ traefik_do_token_rotated_name or traefik_do_token_name }}"
+        filename: /run/secrets/do_token
+    # Volumes
+    mounts:
+      - source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        type: bind
+        readonly: true
+      - source: traefik-letsencrypt
+        target: "{{ letsencrypt_directory }}"
+        type: volume
+    # Configure logging
+    logging:
+      driver: "{{ traefik_logging_driver }}"
+      options: "{{ traefik_logging_options }}"
+    # Configure resource reservations
+    reservations:
+      cpus: "{{ traefik_min_cpus }}"
+      memory: "{{ traefik_min_memory }}"
+    # Configure resource limits
+    limits:
+      cpus: "{{ traefik_max_cpus }}"
+      memory: "{{ traefik_max_memory }}"
+    # Configure restart policy
+    restart_config:
+      condition: on-failure
+      delay: 10s
+      max_attempts: 3
+      window: 120s
+    # Configure networks to attach service to
+    networks:
+      - name: "{{ traefik_network }}"
+        options:
+          external: true
+    # Configure ports
+    publish:
+      - target_port: 80
+        published_port: "{{ traefik_http_port }}"
+        protocol: tcp
+        mode: ingress
+      - target_port: 443
+        published_port: "{{ traefik_https_port }}"
+        protocol: tcp
+        mode: ingress
+    labels: "{{ traefik_labels }}"
+
+# Remove old config when needed
+- name: Remove old traefik config
+  docker_config:
+    name: "{{ traefik_config_name }}"
+    state: absent
+  when: traefik_config_rotated|bool
+
+# Remove olf secrets when needed
+- name: Remove old traefik secret
+  docker_secret:
+    name: "{{ traefik_do_token_name }}"
+    state: absent
+  when: traefik_do_token_rotated|bool

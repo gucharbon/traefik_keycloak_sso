@@ -1,0 +1,3 @@
+**/*.retry
+**/ipynb_checkpoints/
+**/*.cache

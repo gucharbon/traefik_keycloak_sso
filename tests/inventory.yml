@@ -1,0 +1,7 @@
+---
+test:
+  hosts:
+    test-ansible:
+      ansible_host: 192.168.122.182
+      ansible_user: root
+      do_auth_token: tutu

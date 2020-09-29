@@ -1,0 +1,23 @@
+---
+# tasks file for gucharbon.traefik_keycloak_sso
+
+- name: Deploy traefik
+  include_tasks: traefik.yml
+
+- name: Deploy Keycloak
+  include_tasks: keycloak.yml
+
+- name: Provision keycloak realm
+  include_tasks: keycloak_realm.yml
+
+- name: Provision keycloak user
+  include_tasks: users.yml
+
+- name: Create and configure keycloak admin-sso client
+  include_tasks: admin_sso_client.yml
+
+- name: Create and configure keycloak sso client
+  include_tasks: sso_client.yml
+
+- name: Deploy traefik-forward-auth proxies
+  include_tasks: traefik-forward-auth.yml

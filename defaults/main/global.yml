@@ -1,0 +1,6 @@
+---
+profile: test
+
+domain: localhost
+
+uri_validate_cert: false

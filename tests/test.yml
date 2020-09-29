@@ -1,0 +1,30 @@
+---
+- hosts: test
+  roles:
+    # - role: traefik_keycloak_sso
+    #   vars:
+    #     profile: staging
+    #     traefik_http_port: 8080
+    #     traefik_https_port: 9443
+    - role: traefik_keycloak_sso
+      vars:
+        local_ipv4: >
+          {{ lookup("pipe", "hostname -I | awk '{print $1}'") }}
+        do_auth_token: YOUR_API_KEY
+        profile: prod
+        domain: vm.guillaumecharbonnier.dev
+        traefik_http_port: 80
+        traefik_https_port: 443
+        keycloak_user: tutu
+        keycloak_password: toto
+        traefik_logging_driver: loki
+        traefik_logging_options:
+          loki-url: "http://{{ local_ipv4 }}:3100/loki/api/v1/push"
+          loki-retries: "5"
+          loki-batch-size: "400"
+        keycloak_logging_driver: loki
+        keycloak_logging_options:
+          loki-url: "http://{{ local_ipv4 }}:3100/loki/api/v1/push"
+          loki-retries: "5"
+          loki-batch-size: "400"
+        uri_validate_cert: false

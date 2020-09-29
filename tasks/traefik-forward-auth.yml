@@ -1,0 +1,73 @@
+---
+# Deploy traefik service
+- name: Deploy traefik-forward-auth SSO service
+  docker_swarm_service:
+    name: sso-forward-auth
+    image: "{{ traefik_forward_auth_image }}"
+    # Configure using env variable
+    env:
+      DEFAULT_PROVIDER: oidc
+      PROVIDERS_OIDC_CLIENT_ID: "{{ oidc_client_id }}"
+      PROVIDERS_OIDC_CLIENT_SECRET: "{{ oidc_client_secret }}"
+      PROVIDERS_OIDC_ISSUER_URL: >
+        {{ 'https' if traefik_enable_https else 'http' }}://{{ keycloak_subdomain }}.{{ domain }}
+        /auth/realms/{{ oidc_realm }}
+      SECRET: "{{ traefik_forward_auth_secret }}"
+      # Assume no HTTPS
+      INSECURE_COOKIE: "{{ traefik_forward_enable_insecure_cookies }}"
+      # Set log level
+      LOG_LEVEL: "{{ traefik_forward_auth_log_level }}"
+    # Set Traefik labels
+    labels:
+      traefik.enable: "true"
+      # traefik.http.middlewares.sso-auth.forwardauth.address: http://sso-forward-auth:4181
+      traefik.http.middlewares.sso-auth.forwardauth.authResponseHeaders: "{{ traefik_forward_auth_forward_headers }}"
+      traefik.http.routers.sso-auth-router.rule: Host(`{{ sso_subdomain }}.{{ domain }}`)
+      traefik.http.routers.sso-auth-router.middlewares: sso-auth
+      traefik.http.services.sso-auth-service.loadbalancer.server.port: "4181"
+      traefik.http.routers.sso-auth-router.service: sso-auth-service
+      traefik.http.routers.sso-auth-router.tls: "{{ 'true' if traefik_enable_https else 'false' }}"
+      traefik.http.routers.sso-auth-router.tls.certresolver: "{{ 'letsencrypt' if traefik_enable_letsencrypt else omit }}"
+    # Configure networks to attach service to
+    networks:
+      - name: "{{ traefik_network }}"
+        options:
+          external: true
+  tags:
+    - traefik-forward-auth
+
+- name: Deploy traefik-forward-auth admin service
+  docker_swarm_service:
+    name: sso-forward-auth-admin
+    image: "{{ traefik_forward_auth_image }}"
+    # Configure using env variable
+    env:
+      DEFAULT_PROVIDER: oidc
+      PROVIDERS_OIDC_CLIENT_ID: "{{ oidc_admin_client_id }}"
+      PROVIDERS_OIDC_CLIENT_SECRET: "{{ admin_oidc_client_secret }}"
+      PROVIDERS_OIDC_ISSUER_URL: >
+        {{ 'https' if traefik_enable_https else 'http' }}://{{ keycloak_subdomain }}.{{ domain }}
+        /auth/realms/{{ oidc_realm }}
+      SECRET: "very secret password"
+      # Assume no HTTPS
+      INSECURE_COOKIE: "{{ traefik_forward_enable_insecure_cookies }}"
+      # Set log level
+      LOG_LEVEL: "{{ traefik_forward_auth_log_level }}"
+    # Set Traefik labels
+    labels:
+      traefik.enable: "true"
+      # traefik.http.middlewares.admin-sso-auth.forwardauth.address: http://sso-forward-auth-admin:4181
+      traefik.http.middlewares.admin-sso-auth.forwardauth.authResponseHeaders: "{{ traefik_forward_auth_forward_headers }}"
+      traefik.http.routers.admin-sso-auth-router.rule: "Host(`{{ admin_sso_subdomain }}.{{ domain }}`)"
+      traefik.http.routers.admin-sso-auth-router.middlewares: admin-sso-auth
+      traefik.http.services.admin-sso-auth-service.loadbalancer.server.port: "4181"
+      traefik.http.routers.admin-sso-auth-router.service: admin-sso-auth-service
+      traefik.http.routers.admin-sso-auth-router.tls: "{{ 'true' if traefik_enable_https else 'false' }}"
+      traefik.http.routers.admin-sso-auth-router.tls.certresolver: "{{ 'letsencrypt' if traefik_enable_letsencrypt else omit }}"
+    # Configure networks to attach service to
+    networks:
+      - name: "{{ traefik_network }}"
+        options:
+          external: true
+  tags:
+    - traefik-forward-auth

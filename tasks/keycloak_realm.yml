@@ -1,0 +1,72 @@
+---
+- name: "Set scheme fact"
+  set_fact:
+    scheme: "{{ 'https' if traefik_enable_https else 'http' }}"
+  tags:
+    - keycloak_realm
+
+- name: "Set keycloak_base_url fact"
+  set_fact:
+    keycloak_base_url: "{{ scheme }}://{{ keycloak_subdomain }}.{{ domain }}"
+  tags:
+    - keycloak_realm
+
+- name: "Create keycloak token"
+  uri:
+    url: "{{ keycloak_base_url }}/auth/realms/master/protocol/openid-connect/token"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      username: "{{ keycloak_user }}"
+      password: "{{ keycloak_password }}"
+      grant_type: "password"
+      client_id: "admin-cli"
+    validate_certs: "{{ uri_validate_cert }}"
+  register: keycloak_token_result
+  retries: 5
+  delay: 10
+  until: "keycloak_token_result.status == 200"
+  delegate_to: localhost
+  tags:
+    - keycloak_realm
+
+- name: "Set keycloak_access_header facts"
+  set_fact:
+    keycloak_access_header: "Bearer {{ keycloak_token_result.json.access_token }}"
+  tags:
+    - keycloak_realm
+
+- name: "Find out, if realm {{ oidc_realm }} exists"
+  uri:
+    url: "{{ keycloak_base_url }}/auth/admin/realms/{{ oidc_realm }}"
+    method: GET
+    status_code:
+      - 200
+      - 404
+    headers: &keycloak-headers
+      Accept: "application/json"
+      Authorization: "{{ keycloak_access_header }}"
+    validate_certs: "{{ uri_validate_cert }}"
+  delegate_to: localhost
+  register: keycloak_realm_exists
+  tags:
+    - keycloak_realm
+
+- name: "Create realm {{ oidc_realm }}"
+  uri:
+    url: "{{ keycloak_base_url }}/auth/admin/realms"
+    method: POST
+    body: "{{ lookup('template', 'realm.json.j2') }}"
+    body_format: json
+    remote_src: "no"
+    status_code:
+      - 201
+    headers:
+      <<: *keycloak-headers
+      Content-type: "application/json"
+    validate_certs: "{{ uri_validate_cert }}"
+  delegate_to: localhost
+  register: keycloak_realm_create
+  when: "keycloak_realm_exists.status == 404"
+  tags:
+    - keycloak_realm

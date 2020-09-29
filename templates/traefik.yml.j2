@@ -1,0 +1,105 @@
+---
+entryPoints:
+  # HTTP entrypoint
+  http:
+    address: ":80"
+{% if traefik_enable_https_redirect|bool %}
+    http: 
+      redirections:
+        entryPoint:
+          to: https
+          scheme: https
+{% endif %}
+  # HTTPS entrypoint
+  https:
+    address: ":443"
+
+{% for (name, config) in traefik_entrypoints.items()  %}
+  {{ name }}:
+    address: "{{ config.address }}"
+{% endfor %}
+{% if traefik_enable_prometheus_metrics|bool %}
+  metrics:
+    # Prometheus metrics entrypoint
+    address: "{{ traefik_prometheus_metrics_address }}"
+{% endif %}
+
+
+# Enable docker provider
+providers:
+  docker:
+    swarmMode: true
+    endpoint: unix:///var/run/docker.sock
+    exposedByDefault: false
+    network: "{{ traefik_network }}"
+  file:
+    filename: /traefik.yml
+    watch: false
+
+{% if traefik_default_tls_cert|length > 1 %}
+# Configure default TLS certificate
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /traefik_default_tls_cert
+        keyFile: /run/secrets/traefik_default_tls_key
+{% endif %}
+
+# Configure API
+api:
+  insecure: {{ traefik_enable_api_insecure }}
+  dashboard: {{ traefik_enable_api_dashboard }}
+  debug: {{ traefik_enable_api_debug }}
+
+{%- if traefik_enable_letsencrypt|bool %}
+
+# Enable Let's Encrypt certificates
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: {{ letsencrypt_email }}
+      storage: {{ letsencrypt_directory + 'acme.json' }}
+      dnsChallenge:
+        provider: digitalocean
+        delayBeforeCheck: 5
+      caServer: {{ letsencrypt_ca_server }}
+{% endif %}
+
+# Configure logging
+log:
+  level: {{ traefik_log_level }}
+  format: {{ traefik_log_format }}
+
+# Enable access logs
+accessLog:
+  format: "{{ traefik_access_log_format }}"
+
+{% if traefik_enable_prometheus_metrics|bool or traefik_enable_datadog_metrics|bool %}
+metrics:
+{% if traefik_enable_prometheus_metrics|bool %}
+  # Enable prometheus metrics
+  prometheus:
+    entryPoint: metrics
+{% endif %}
+{% if traefik_enable_datadog_metrics|bool %}
+  datadog:
+    address: "{{ traefik_datadog_metrics_agent_address }}"
+    pushInterval: "{{ traefik_datadog_metrics_push_interval }}"
+{% endif %}
+{% endif %}
+{% if traefik_enable_datadog_tracing|bool %}
+tracing:
+  datadog:
+    localAgentHostPort: {{ traefik_datadog_tracing_agent_address }}
+    {# prioritySampling: true #}
+{% endif %}
+{% if traefik_enable_jaeger_tracing|bool %}
+tracing:
+  jaeger:
+    samplingServerURL: {{ traefik_jaeger_sampling_server_url }}
+    localAgentHostPort: {{ traefik_jaeger_tracing_agent_address }}
+    traceContextHeaderName: {{ traefik_jaeger_trace_context_name }}
+    collector:
+      endpoint: {{ traefik_jaeger_collector_endpoint }}
+{% endif %}

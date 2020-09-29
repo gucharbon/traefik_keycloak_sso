@@ -1,0 +1,12 @@
+{
+  "id": "{{ oidc_realm }}",
+  "realm": "{{ oidc_realm }}",
+  "enabled": true,
+  "sslRequired": "{{ 'external' if traefik_enable_https else 'none' }}",
+  "loginWithEmailAllowed": true,
+  "registrationAllowed": false,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true
+}
